@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f5f3ec"><title>我的工牌有想法 · 1.2 单机试玩</title>
+  <style>
+    *{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden}
+    body{background:#e5e9df;color:#213c36;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;display:flex;align-items:center;justify-content:center;gap:clamp(24px,5vw,80px);padding:24px;height:var(--viewport-height,100dvh)}
+    aside{max-width:320px}aside small{font-size:12px;letter-spacing:3px;color:#55705f}aside h1{font-size:42px;line-height:1.3;font-weight:600;margin:22px 0}aside p{font-size:15px;line-height:1.9;color:#6d7c70}aside .note{margin-top:48px;border-top:1px solid #c9d1c4;padding-top:20px;font-size:12px}
+    #frame{position:relative;width:min(460px,100%);height:min(960px,calc(var(--viewport-height,100dvh) - 48px));box-shadow:0 20px 80px #213c3620;border-radius:24px;overflow:hidden;flex-shrink:0;background:#f5f3ec;touch-action:none;overscroll-behavior:none;outline:none}
+    canvas{display:block;width:100%;height:100%}#safe-area{position:absolute;inset:0;pointer-events:none;padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px)}
+    #controls{position:absolute;inset:0;pointer-events:none}#controls button{position:absolute;pointer-events:auto;opacity:0;cursor:pointer;border-radius:14px;touch-action:none}#controls button:focus-visible{opacity:1;background:transparent;color:transparent;outline:3px solid #43765a;outline-offset:-3px}
+    @media(max-width:1000px),(max-height:600px){aside{display:none}body{padding:0;background:#f5f3ec}#frame{width:min(100vw,560px);height:var(--viewport-height,100dvh);border-radius:0;box-shadow:none}}
+  </style>
+</head>
+<body>
+  <aside><small>OFFICE LIFE / VERSION 1.2</small><h1>上班是日常，<br>怎么活是选择。</h1><p>选一张工牌，安排自己的每个月。<br>和同事建立信任，让曾经的选择<br>改变这一年的职场故事。</p><div class="note">1.2 开发版 · 无需登录 · 自动保存<br>每次选择推进一周，每四周结算收支。<br>上下滑动或滚轮浏览 · 方向键翻动<br>Tab + Enter 选择 · 底部按钮随时可用。</div></aside>
+  <main id="frame" tabindex="0" aria-label="我的工牌有想法，上下滑动或使用方向键浏览"><canvas id="game" aria-label="游戏画面：属性及事件以画布显示"></canvas><div id="safe-area" aria-hidden="true"></div><div id="controls"></div></main>
+  <script src="bundle.js"></script>
+</body>
+</html>
