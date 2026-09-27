@@ -1,6 +1,7 @@
 const { TRAITS, GOALS, PEOPLE, PLANS, BADGES } = require('../data/life');
 const { goalProgress } = require('../core/life');
 const { C } = require('./layout');
+const { TITLES } = require('../core/weekend');
 function setup(ui, actions, profile) {
   ui.heading('领取你的专属工牌', '一种特质，一个目标。这一年由你来安排。');
   ui.paragraph('01 / 你擅长怎样解决问题', { color: C.green, bold: true });
@@ -46,4 +47,26 @@ function collection(ui, data) {
   ui.paragraph(`年度目标已达成 ${data.goals.length}/3\n重新开始会保留收藏。`, { color: C.green });
   ui.paragraph('收藏只保存在本机。清除数据或更换设备后不会同步。', { size: 13 });
 }
-module.exports = { setup, plan, journal, collection };
+function weekend(ui, board, actions) {
+  if (!board) return;
+  const type = board.type || 'pairs', columns = type === 'pairs' ? 4 : 3;
+  ui.heading('周末，放空一下', TITLES[type]);
+  if (type === 'lights') ui.paragraph(`还亮着 ${board.tiles.filter(Boolean).length} 盏 · 已走 ${board.moves} 步`, { color: C.green });
+  else {
+    const count = board.matched.length / (type === 'pairs' ? 2 : 1), total = type === 'pairs' ? 6 : 9;
+    ui.progress(count, total, `${count} / ${total} · 尝试 ${board.moves} 次`);
+  }
+  for (let row = 0; row < 3; row++) {
+    ui.buttons(board.tiles.slice(row * columns, row * columns + columns).map((symbol, col) => {
+      const index = row * columns + col, done = type !== 'lights' && board.matched.includes(index);
+      const title = type === 'lights' ? (symbol ? '●' : '○') : done ? '✓' : String(symbol);
+      const label = type === 'lights' ? `灯 ${index + 1}：${symbol ? '亮' : '灭'}` : type === 'numbers' ? `数字 ${symbol}` : `图案 ${index + 1}：${symbol}`;
+      return { title, size: 24, center: true, disabled: done || board.complete,
+        selected: type === 'lights' ? symbol : board.selected === index, color: done ? C.line : C.green,
+        label, action: () => actions.tile(index) };
+    }));
+  }
+  ui.paragraph(board.message, { color: C.green });
+  ui.paragraph('纯放松，不影响属性；随时可以进入下一周。', { size: 12 });
+}
+module.exports = { setup, plan, journal, collection, weekend };

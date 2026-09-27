@@ -5,6 +5,7 @@ const { createGesture } = require('../src/platform/gesture');
 const { createWechatPlatform } = require('../src/platform/wechat');
 const { createGame, choose, advance } = require('../src/core/engine');
 const { allEvents } = require('../src/content/catalog');
+const { createWeekend } = require('../src/core/weekend');
 const { OPTIONS } = require('../src/data/life');
 function canvasStub() {
   const ctx = new Proxy({ font: '', measureText(value) {
@@ -47,8 +48,8 @@ test('14种窗口尺寸：所有页面文字不重叠、不横向溢出，字号
     const renderer = createRenderer({ canvas: canvasStub(), size: () => size, syncControls: t => { targets = t; } });
     const state = createGame(() => 0, { trait: 'specialist', goal: 'savings' });
     state.life.journal = [{ week: 1, text: '这是非常长的一段职场记录。'.repeat(18) }];
-    for (const view of ['home', 'setup', 'plan', 'journal', 'collection', 'help', 'confirm', 'game']) {
-      renderer.render(view, state, actions, '', { profile: { trait: 'specialist', goal: 'savings' }, collection: { badges: [], goals: [], completed: 0 } });
+    for (const view of ['home', 'setup', 'plan', 'journal', 'collection', 'help', 'confirm', 'game', 'weekend']) {
+      renderer.render(view, state, actions, '', { weekend: createWeekend(() => 0), profile: { trait: 'specialist', goal: 'savings' }, collection: { badges: [], goals: [], completed: 0 } });
       const report = renderer.inspect();
       assert.ok(report.viewport.h >= 44, `${size.width}×${size.height} ${view}`);
       checkText(report.textBoxes, size); checkText(report.footerTextBoxes, size); checkTargets(targets, size);
@@ -92,7 +93,7 @@ test('底部主按钮固定；滚动只响应正文；切周归顶；窗口变�
   renderer.scroll(500); const after = targets.find(t => t.label.includes('工牌准备好了'));
   assert.equal(after.y, before.y); assert.equal(after.h, before.h);
   const offset = renderer.inspect().offset;
-  renderer.render('setup', state, actions, '', { profile: { trait: 'boundaries', goal: 'balance' } });
+  renderer.render('setup', state, actions, '', { weekend: createWeekend(() => 0), profile: { trait: 'boundaries', goal: 'balance' } });
   assert.equal(renderer.inspect().offset, offset);
   size = SIZES[10]; renderer.render('setup', state, actions); checkTargets(targets, size);
   renderer.render('game', { ...state, week: 2 }, actions); assert.equal(renderer.inspect().offset, 0);
@@ -147,9 +148,11 @@ test('顶部品牌、版本与手记首页共用胶囊安全行：小屏、大�
       const targets = renderer.render(view, state, active), report = renderer.inspect();
       const blocks = [report.header.brand, ...report.header.actions];
       const capsule = { x: d.menu.left, y: d.menu.top, w: d.menu.right - d.menu.left, h: d.menu.bottom - d.menu.top };
+      const moreGames = { x: d.menu.left - 48, y: d.menu.top, w: 48, h: capsule.h };
       blocks.forEach(rect => {
         assert.ok(rect.y >= d.status, '不进入系统状态栏');
         assert.ok(!overlaps(rect, capsule), '不碰撞微信胶囊');
+        assert.ok(!overlaps(rect, moreGames), '不碰撞胶囊前的更多游戏入口');
         assert.ok(rect.x >= 0 && rect.x + rect.w <= d.width);
         assert.ok(rect.y + rect.h <= report.viewport.y, '正文不能盖住顶部');
       });
@@ -173,5 +176,25 @@ test('胶囊尺寸不可用时顶部使用安全回退，版本号仍保留', ()
     assert.equal(size.navigation, undefined);
     assert.ok(renderer.inspect().header.brand.y >= size.top);
     checkTargets(targets, { ...size, left: 0, right: 0 });
+  }
+});
+
+test('三种周末小游戏在所有屏幕下文字完整，棋盘按钮可滑动到达', () => {
+  const { TYPES, pickTile } = require('../src/core/weekend');
+  for (const size of SIZES) for (const type of TYPES) {
+    let targets;
+    const renderer = createRenderer({ canvas: canvasStub(), size: () => size, syncControls: t => { targets = t; } });
+    const board = createWeekend(() => 0.3, type);
+    const state = choose(createGame(() => 0), 0);
+    renderer.render('weekend', state, actions, '', { weekend: board });
+    checkText(renderer.inspect().textBoxes, size);
+    const labels = new Set();
+    for (let y = 0; y <= renderer.inspect().maxScroll + 40; y += 40) {
+      targets.filter(t => /^(图案 |数字 |灯 )/.test(t.label)).forEach(t => labels.add(t.label));
+      checkTargets(targets, size); renderer.scroll(40);
+    }
+    assert.equal(labels.size, board.tiles.length, type);
+    renderer.render('weekend', state, actions, '', { weekend: pickTile(board, 0) });
+    checkText(renderer.inspect().textBoxes, size);
   }
 });

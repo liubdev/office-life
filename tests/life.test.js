@@ -139,7 +139,13 @@ test('应用流程：开局配置→月度计划→事件→手记→继续→�
     click('进修技能'); assert.equal(app.getState().money, 2600);
     click('职场手记'); click('回到这一周');
     const event = eventFor(app.getState()); click(event.choices[0].text); assert.equal(app.getState().phase, 'feedback');
-    click('进入下一周'); assert.equal(app.getState().week, 2);
+    click('周末 · 随机小游戏');
+    const tile = targets.find(t => /^(图案 |数字 |灯 )/.test(t.label));
+    assert.ok(tile); tile.action();
+    const weekendTargets = targets.map(t => [t.label, !!t.selected]);
+    click('保存并返回首页'); click('继续第'); click('周末 · 随机小游戏');
+    assert.deepEqual(targets.map(t => [t.label, !!t.selected]), weekendTargets);
+    click('结束周末，进入下一周'); assert.equal(app.getState().week, 2);
     click('保存并返回首页'); click('开始新的人生'); click('确认重新开始');
     click('保存并返回首页'); click('继续第'); assert.equal(app.getState().week, 2);
     const resumed = start(platform); assert.equal(resumed.getState().week, 2); assert.equal(resumed.getState().life.plan, 'study');

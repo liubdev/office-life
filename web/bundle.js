@@ -12,12 +12,14 @@ const { createGame, choose, advance } = require("src/core/engine.js");
 const { needsPlan, planMonth, seekOpportunity } = require("src/core/life.js");
 const { createStorage } = require("src/services/storage.js");
 const { createCollection } = require("src/services/collection.js");
+const { createWeeklyWeekend, pickTile } = require("src/core/weekend.js");
 const { createRenderer } = require("src/ui/renderer.js");
 function start(platform) {
   const storage = createStorage(platform), collection = createCollection(platform), renderer = createRenderer(platform);
   let state = storage.load(), view = 'home', lastAction = 0;
+  let weekend = null, weekendKey = '';
   let profile = { trait: 'communicator', goal: 'savings' }, journalPage = 0;
-  const redraw = () => renderer.render(view, state, actions, [storage.warning(), collection.warning()].filter(Boolean).join(' · '), { profile, collection: collection.get(), journalPage });
+  const redraw = () => renderer.render(view, state, actions, [storage.warning(), collection.warning()].filter(Boolean).join(' · '), { profile, collection: collection.get(), journalPage, weekend });
   const save = () => { if (state) { storage.save(state); collection.record(state); } };
   const gameView = () => needsPlan(state) ? 'plan' : 'game';
   const guarded = action => () => {
@@ -39,6 +41,8 @@ function start(platform) {
     plan: id => guarded(() => { state = planMonth(state, id); view = gameView(); save(); })(),
     seek: guarded(() => { state = seekOpportunity(state); save(); }),
     choose: index => guarded(() => { if (view !== 'game' || needsPlan(state)) return; state = choose(state, index); save(); })(),
+    weekend: guarded(() => { if (!state || state.phase !== 'feedback' || state.ending) return; const key = `${state.life.runId}:${state.week}`; if (weekendKey !== key) { weekend = createWeeklyWeekend(state); weekendKey = key; } view = 'weekend'; }),
+    tile: index => { if (view !== 'weekend') return; weekend = pickTile(weekend, index); redraw(); },
     advance: guarded(() => { state = advance(state); view = gameView(); save(); })
   };
   collection.record(state);
@@ -612,17 +616,84 @@ function titleFor(state) {
 module.exports = { forecast, guidance, titleFor };
 
 },
+"src/core/weekend.js":function(require,module,exports){
+const SYMBOLS = ['☕', '♫', '★', '☀', '☂', '✿'];
+const TYPES = ['pairs', 'numbers', 'lights'];
+const TITLES = { pairs: '配对消消乐', numbers: '数字漫步', lights: '熄灯小屋' };
+function shuffle(items, rng) {
+  const result = [...items];
+  for (let i = result.length - 1; i > 0; i--) {
+    const j = Math.min(i, Math.max(0, Math.floor(rng() * (i + 1))));
+    [result[i], result[j]] = [result[j], result[i]];
+  }
+  return result;
+}
+function toggleLights(tiles, index) {
+  return tiles.map((on, i) => Math.abs(Math.floor(i / 3) - Math.floor(index / 3)) + Math.abs(i % 3 - index % 3) <= 1 ? !on : on);
+}
+function createWeekend(rng = Math.random, type = 'pairs') {
+  if (type === 'numbers') return { type, tiles: shuffle([1, 2, 3, 4, 5, 6, 7, 8, 9], rng), matched: [], next: 1, moves: 0, complete: false, message: '从 1 到 9，依次点亮数字。' };
+  if (type === 'lights') {
+    let tiles = Array(9).fill(false);
+    // Scramble a solved board with legal moves, so every puzzle has a solution.
+    shuffle([0, 1, 2, 3, 4, 5, 6, 7, 8], rng).slice(0, 4).forEach(i => { tiles = toggleLights(tiles, i); });
+    if (!tiles.some(Boolean)) tiles = toggleLights(tiles, 4);
+    return { type, tiles, moves: 0, complete: false, message: '点击一格，翻转自己和上下左右的灯；全部熄灭即可。' };
+  }
+  return { type: 'pairs', tiles: shuffle([...SYMBOLS, ...SYMBOLS], rng), matched: [], selected: null, moves: 0, complete: false, message: '点两个相同图案即可消除，不限时。' };
+}
+function seededRandom(value) {
+  let seed = 2166136261;
+  for (const char of value) seed = Math.imul(seed ^ char.charCodeAt(0), 16777619) >>> 0;
+  return () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed / 4294967296; };
+}
+function createWeeklyWeekend(state) {
+  const run = state.life && state.life.runId || 'legacy';
+  const week = Math.max(1, state.week), block = Math.floor((week - 1) / TYPES.length);
+  let bag, previous;
+  for (let i = 0; i <= block; i++) {
+    bag = shuffle(TYPES, seededRandom(`${run}:bag:${i}`));
+    if (bag[0] === previous) [bag[0], bag[1]] = [bag[1], bag[0]];
+    previous = bag[bag.length - 1];
+  }
+  return createWeekend(seededRandom(`${run}:board:${week}`), bag[(week - 1) % TYPES.length]);
+}
+function pickTile(board, index) {
+  if (!board || board.complete || !Number.isInteger(index) || index < 0 || index >= board.tiles.length) return board;
+  if (board.type === 'lights') {
+    const tiles = toggleLights(board.tiles, index), complete = !tiles.some(Boolean);
+    return { ...board, tiles, complete, moves: board.moves + 1, message: complete ? '灯都熄了，晚安，好好休息。' : '点击翻转自己和上下左右的灯，试着全部熄灭。' };
+  }
+  if (board.matched.includes(index)) return board;
+  if (board.type === 'numbers') {
+    if (board.tiles[index] !== board.next) return { ...board, moves: board.moves + 1, message: `下一步找 ${board.next}，不用着急。` };
+    const complete = board.next === 9;
+    return { ...board, matched: [...board.matched, index], next: board.next + 1, moves: board.moves + 1, complete,
+      message: complete ? '走完九步，思绪也清爽了。' : `很好，接下来找 ${board.next + 1}。` };
+  }
+  if (board.selected === index) return { ...board, selected: null };
+  if (board.selected === null) return { ...board, selected: index };
+  const matched = board.tiles[board.selected] === board.tiles[index];
+  const next = { ...board, selected: null, moves: board.moves + 1,
+    matched: matched ? [...board.matched, board.selected, index] : board.matched,
+    message: matched ? '配对成功！' : '图案不同，再试试。' };
+  if (next.matched.length === next.tiles.length) { next.complete = true; next.message = '全部消除！带着好心情迎接下一周。'; }
+  return next;
+}
+module.exports = { createWeekend, createWeeklyWeekend, pickTile, TYPES, TITLES };
+
+},
 "src/ui/renderer.js":function(require,module,exports){
 const { CAREERS, LABELS, MAX_WEEKS } = require("src/core/config.js");
 const { salary, eventFor } = require("src/core/engine.js");
-const { forecast, guidance, titleFor } = require("src/core/guidance.js");
+const { forecast, titleFor } = require("src/core/guidance.js");
 const { goalProgress } = require("src/core/life.js");
-const { PLANS } = require("src/data/life.js");
 const screens = require("src/ui/life-screens.js");
 const { headerLayout, drawHeader } = require("src/ui/header.js");
 const { C, createLayout, linesFor, roundRect, drawText } = require("src/ui/layout.js");
 function createRenderer(platform) {
   const ctx = platform.canvas.getContext('2d');
+  let cachedLayout;
   let targets = [], lastArgs, route = '', offset = 0, maxScroll = 0, viewport, diagnostics;
   function home(ui, state, actions) {
     ui.paragraph('一份工作，很多种活法。', { color: C.green });
@@ -635,37 +706,29 @@ function createRenderer(platform) {
     else ui.paragraph('初始存款 ¥3,000 · 月薪 ¥4,500', { size: 13 });
   }
   function play(ui, state, actions) {
-    ui.heading('本周的职场生活');
-    ui.progress(state.week, MAX_WEEKS, `第 ${state.week} / ${MAX_WEEKS} 周`);
-    const next = CAREERS[state.level + 1];
-    ui.card(state.employed ? CAREERS[state.level].name : '待业 · 寻找下一站', `月薪 ¥${salary(state).toLocaleString('en-US')}\n${next ? `晋升还差经验 ${Math.max(0, next.xp - state.xp)} / 好感 ${Math.max(0, 55 - state.favor)}` : `经验 ${state.xp} · 已达最高职级`}`, { dark: true });
+    ui.heading(`第 ${state.week} 周 · ${state.phase === 'playing' ? '上班日常' : '本周回声'}`);
+    ui.paragraph(`${state.employed ? CAREERS[state.level].name : '待业中'} · 月薪 ¥${salary(state).toLocaleString('en-US')}`, { size: 13, after: 8 });
     ui.metrics([
       { label: '存款', value: `¥${state.money.toLocaleString('en-US')}`, risk: state.money < 1000 },
       { label: '健康', value: state.health, risk: state.health <= 25 },
-      { label: '精神状态', value: state.mood, risk: state.mood <= 25 },
-      { label: '老板好感', value: state.favor, risk: state.favor <= 25 }
+      { label: '心情', value: state.mood, risk: state.mood <= 25 },
+      { label: '好感', value: state.favor, risk: state.favor <= 25 }
     ]);
     const cash = forecast(state);
-    ui.paragraph(`${cash.remaining} 周后月结 · 预计工资 ¥${cash.income}\n生活费 ¥${cash.cost} · 每 4 周评估晋升`, { size: 13, color: C.green });
+    ui.paragraph(`${cash.remaining} 周后月结 · 预计结余 ¥${(cash.income - cash.cost).toLocaleString('en-US')}`, { size: 12, after: 8 });
     if (state.phase === 'playing') {
       const event = eventFor(state);
-      ui.paragraph(`${event.tag} · ${event.choices.length} 种选择`, { color: C.green, bold: true });
       ui.card(event.title, event.text, { size: 20, fill: C.pale });
-      ui.paragraph('你会怎么选？', { size: 13, color: C.muted });
       event.choices.forEach((choice, i) => {
         const hint = `${choice.requires ? '专属选择 · ' : ''}${Object.entries(choice.effects).map(([k, v]) => `${LABELS[k]}${v > 0 ? '+' : ''}${v}`).join('  ')}`;
         ui.option(choice.text, hint, { marker: String.fromCharCode(65 + i), action: () => actions.choose(i), special: !!choice.requires });
       });
-      ui.paragraph(guidance(state), { size: 13, color: C.green });
-      if (state.life && state.life.plan) ui.paragraph(`本月安排：${PLANS.find(p => p.id === state.life.plan).name} · 月末兑现`, { size: 13 });
-      ui.paragraph('选项展示直接效果；特质、转岗与月结另计。', { size: 12 });
     } else {
-      ui.paragraph('✓ 本周回声', { color: C.green, bold: true });
       ui.card(state.feedback.title, state.feedback.text, { size: 20 });
       const changes = Object.entries(state.feedback.deltas).filter(([, delta]) => delta).map(([key, delta]) => `${LABELS[key]} ${delta > 0 ? '+' : ''}${delta}`);
-      if (changes.length) ui.card('本周实际变化', changes.join('  ·  '), { fill: C.pale });
+      if (changes.length) ui.paragraph(changes.join('  ·  '), { size: 13, color: C.green });
       state.feedback.notices.forEach(notice => ui.paragraph(notice, { size: 14, color: C.green }));
-      if (!state.feedback.notices.length) ui.paragraph('一点点改变，也在塑造你的下一周。');
+      if (!state.ending) ui.card('周末 · 随机小游戏', '配对、数字或熄灯，换个节奏。', { action: actions.weekend, fill: C.pale });
       if (state.ending) ui.paragraph('这段旅程已抵达终点。', { color: C.red });
     }
   }
@@ -683,6 +746,7 @@ function createRenderer(platform) {
   function footerFor(view, state, actions) {
     if (view === 'home') return [[{ title: state && state.phase !== 'ended' ? `继续第 ${state.week} 周的生活` : '领取工牌，开始上班', action: state && state.phase !== 'ended' ? actions.resume : actions.newGame, primary: true }], [{ title: '玩法说明', action: actions.help }, { title: '人生收藏', action: actions.collection }]];
     if (view === 'setup') return [[{ title: '工牌准备好了，开始这一年', action: actions.begin, primary: true }]];
+    if (view === 'weekend') return [[{ title: '结束周末，进入下一周', action: actions.advance, primary: true }]];
     if (view === 'journal') return [[{ title: '回到这一周', action: actions.resume, primary: true }]];
     if (view === 'help' || view === 'collection') return [[{ title: '回到首页', action: actions.home, primary: true }]];
     if (view === 'confirm') return [[{ title: '确认重新开始', action: actions.newGame, primary: true }], [{ title: '继续当前人生', action: actions.resume }]];
@@ -690,7 +754,7 @@ function createRenderer(platform) {
     if (view === 'game' && state.phase === 'feedback') return [[{ title: state.ending ? '查看我的年度档案' : '收好心情，进入下一周', action: actions.advance, primary: true }]];
     return [];
   }
-  function render(view, state, actions, warning = '', meta = {}) {
+  function render(view, state, actions, warning = '', meta = {}, reuseLayout = false) {
     lastArgs = [view, state, actions, warning, meta];
     const key = `${view}:${state ? `${state.life ? state.life.runId : ''}:${state.week}:${state.phase}` : ''}:${meta.journalPage || 0}`;
     if (key !== route) { offset = 0; route = key; }
@@ -718,29 +782,33 @@ function createRenderer(platform) {
       roundRect(ctx, originX + pad, contentTop, inner, h, '#f7ece6', 8);
       lines.forEach((line, i) => drawText(ctx, line, originX + pad + 10, contentTop + 8 + i * 18, 12, C.red)); contentTop += h + 8;
     }
-    const footer = createLayout(ctx, inner, { x: originX + pad, y: 8, gap: 8 }), rows = footerFor(view, state, actions);
-    rows.forEach(row => footer.buttons(row));
+    const footer = reuseLayout ? cachedLayout.footer : createLayout(ctx, inner, { x: originX + pad, y: 8, gap: 8 }), rows = footerFor(view, state, actions);
+    if (!reuseLayout) rows.forEach(row => footer.buttons(row));
     const footerHeight = rows.length ? footer.height : 0, footerY = bottom - footerHeight;
-    const ui = createLayout(ctx, inner, { x: originX + pad });
-    if (view === 'home') home(ui, state, actions);
-    else if (view === 'setup') screens.setup(ui, actions, meta.profile || { trait: 'communicator', goal: 'savings' });
-    else if (view === 'plan') screens.plan(ui, state, actions);
-    else if (view === 'journal') screens.journal(ui, state, actions, meta.journalPage || 0);
-    else if (view === 'collection') screens.collection(ui, meta.collection || { badges: [], goals: [], completed: 0 });
-    else if (view === 'confirm') { ui.heading('开始一段新的人生？', '当前存档将在完成新工牌配置后被替换。你也可以继续原来的职场旅程。'); }
-    else if (view === 'help') {
-      ui.heading('上班之前，先看这里');
-      [
-        ['你的专属工牌', '开局选择特质与年度目标。一局最多 52 周，特质和同事信任能解锁专属选项。'],
-        ['安排自己的生活', '每四周先选一次主动安排，支出立即扣除，收益在月末兑现。寻找机会累计两次，可在月初联系猎头。'],
-        ['工资与晋升', '每 4 周发工资并扣除 ¥3,200 生活费。工资按实际在岗周数累计；晋升需要经验和好感达到要求，每 4 周评估一次。'],
-        ['照顾自己', '健康或精神降至 0、存款低于 0，旅程就会结束。低好感可能引发裁员，离职后可以重新求职。'],
-        ['选择与回声', '每次事件选择推进一周。选项显示直接影响；特质、关系及月结结果以反馈为准。上下滑动可查看完整内容。'],
-        ['本机存档', '进度仅保存在本机，不上传到服务器。删除数据或更换设备可能丢失进度；重新开始会替换当前存档，保留人生收藏。'],
-        ['人生收藏', '年度称号与达成的目标会留在人生收藏。当前无广告、无付费、无账号登录，角色与情节均为虚构。']
-      ].forEach(([title, body]) => ui.card(title, body));
-    } else if (state.phase === 'ended') ending(ui, state);
-    else play(ui, state, actions);
+    const ui = reuseLayout ? cachedLayout.ui : createLayout(ctx, inner, { x: originX + pad });
+    if (!reuseLayout) {
+      if (view === 'home') home(ui, state, actions);
+      else if (view === 'weekend') screens.weekend(ui, meta.weekend, actions);
+      else if (view === 'setup') screens.setup(ui, actions, meta.profile || { trait: 'communicator', goal: 'savings' });
+      else if (view === 'plan') screens.plan(ui, state, actions);
+      else if (view === 'journal') screens.journal(ui, state, actions, meta.journalPage || 0);
+      else if (view === 'collection') screens.collection(ui, meta.collection || { badges: [], goals: [], completed: 0 });
+      else if (view === 'confirm') { ui.heading('开始一段新的人生？', '当前存档将在完成新工牌配置后被替换。你也可以继续原来的职场旅程。'); }
+      else if (view === 'help') {
+        ui.heading('上班之前，先看这里');
+        [
+          ['你的专属工牌', '开局选择特质与年度目标。一局最多 52 周，特质和同事信任能解锁专属选项。'],
+          ['安排自己的生活', '每四周先选一次主动安排，支出立即扣除，收益在月末兑现。寻找机会累计两次，可在月初联系猎头。'],
+          ['工资与晋升', '每 4 周发工资并扣除 ¥3,200 生活费。工资按实际在岗周数累计；晋升需要经验和好感达到要求，每 4 周评估一次。'],
+          ['照顾自己', '健康或精神降至 0、存款低于 0，旅程就会结束。低好感可能引发裁员，离职后可以重新求职。'],
+          ['选择与回声', '每次事件选择推进一周。选项显示直接影响；特质、关系及月结结果以反馈为准。上下滑动可查看完整内容。'],
+          ['本机存档', '进度仅保存在本机，不上传到服务器。删除数据或更换设备可能丢失进度；重新开始会替换当前存档，保留人生收藏。'],
+          ['人生收藏', '年度称号与达成的目标会留在人生收藏。当前无广告、无付费、无账号登录，角色与情节均为虚构。']
+        ].forEach(([title, body]) => ui.card(title, body));
+      } else if (state.phase === 'ended') ending(ui, state);
+      else play(ui, state, actions);
+      cachedLayout = { ui, footer };
+    }
     const viewHeight = Math.max(1, footerY - contentTop - 8);
     viewport = { x: originX, y: contentTop, w: width, h: viewHeight };
     maxScroll = Math.max(0, ui.height - viewHeight); offset = Math.max(0, Math.min(maxScroll, offset));
@@ -767,11 +835,11 @@ function createRenderer(platform) {
   }
   function tap(x, y) { const target = targets.find(t => x >= t.x && x <= t.x + t.w && y >= t.y && y <= t.y + t.h); if (target) target.action(); }
   function scroll(delta, x, y) {
-    if (!lastArgs || !Number.isFinite(delta)) return;
-    if (Number.isFinite(x) && Number.isFinite(y) && (x < viewport.x || x > viewport.x + viewport.w || y < viewport.y || y > viewport.y + viewport.h)) return;
+    if (!lastArgs || !Number.isFinite(delta)) return false;
+    if (Number.isFinite(x) && Number.isFinite(y) && (x < viewport.x || x > viewport.x + viewport.w || y < viewport.y || y > viewport.y + viewport.h)) return false;
     const next = Math.max(0, Math.min(maxScroll, offset + delta));
-    if (next === offset) return;
-    offset = next; render(...lastArgs);
+    if (next === offset) return false;
+    offset = next; render(...lastArgs, true); return true;
   }
   return { render, tap, scroll, inspect: () => diagnostics };
 }
@@ -782,6 +850,7 @@ module.exports = { createRenderer };
 const { TRAITS, GOALS, PEOPLE, PLANS, BADGES } = require("src/data/life.js");
 const { goalProgress } = require("src/core/life.js");
 const { C } = require("src/ui/layout.js");
+const { TITLES } = require("src/core/weekend.js");
 function setup(ui, actions, profile) {
   ui.heading('领取你的专属工牌', '一种特质，一个目标。这一年由你来安排。');
   ui.paragraph('01 / 你擅长怎样解决问题', { color: C.green, bold: true });
@@ -827,7 +896,29 @@ function collection(ui, data) {
   ui.paragraph(`年度目标已达成 ${data.goals.length}/3\n重新开始会保留收藏。`, { color: C.green });
   ui.paragraph('收藏只保存在本机。清除数据或更换设备后不会同步。', { size: 13 });
 }
-module.exports = { setup, plan, journal, collection };
+function weekend(ui, board, actions) {
+  if (!board) return;
+  const type = board.type || 'pairs', columns = type === 'pairs' ? 4 : 3;
+  ui.heading('周末，放空一下', TITLES[type]);
+  if (type === 'lights') ui.paragraph(`还亮着 ${board.tiles.filter(Boolean).length} 盏 · 已走 ${board.moves} 步`, { color: C.green });
+  else {
+    const count = board.matched.length / (type === 'pairs' ? 2 : 1), total = type === 'pairs' ? 6 : 9;
+    ui.progress(count, total, `${count} / ${total} · 尝试 ${board.moves} 次`);
+  }
+  for (let row = 0; row < 3; row++) {
+    ui.buttons(board.tiles.slice(row * columns, row * columns + columns).map((symbol, col) => {
+      const index = row * columns + col, done = type !== 'lights' && board.matched.includes(index);
+      const title = type === 'lights' ? (symbol ? '●' : '○') : done ? '✓' : String(symbol);
+      const label = type === 'lights' ? `灯 ${index + 1}：${symbol ? '亮' : '灭'}` : type === 'numbers' ? `数字 ${symbol}` : `图案 ${index + 1}：${symbol}`;
+      return { title, size: 24, center: true, disabled: done || board.complete,
+        selected: type === 'lights' ? symbol : board.selected === index, color: done ? C.line : C.green,
+        label, action: () => actions.tile(index) };
+    }));
+  }
+  ui.paragraph(board.message, { color: C.green });
+  ui.paragraph('纯放松，不影响属性；随时可以进入下一周。', { size: 12 });
+}
+module.exports = { setup, plan, journal, collection, weekend };
 
 },
 "src/ui/layout.js":function(require,module,exports){
@@ -879,7 +970,9 @@ function createLayout(ctx, width, { x = 16, y = 12, gap = 12 } = {}) {
     commands.push(() => roundRect(ctx, tx, ty, w, h, fill, 14, options.dark ? undefined : C.line));
     const titleColor = options.dark ? C.white : options.disabled ? C.muted : options.color || C.ink;
     let yy = ty + 16;
-    yy += blockText(title, tx + 16, yy, w - 32, options.size || 15, titleColor, true, Math.ceil((options.size || 15) * 1.45));
+    setFont(ctx, options.size || 15, true);
+    const titleX = options.center ? tx + (w - ctx.measureText(title).width) / 2 : tx + 16;
+    yy += blockText(title, titleX, yy, w - 32, options.size || 15, titleColor, true, Math.ceil((options.size || 15) * 1.45));
     if (body) blockText(body, tx + 16, yy + 6, w - 32, 13, options.dark ? C.mint : C.muted, false, 20);
     if (options.action && !options.disabled) targets.push({ label: options.label || title, x: tx, y: ty, w, h, action: options.action, selected: !!options.selected });
   }
@@ -891,15 +984,10 @@ function createLayout(ctx, width, { x = 16, y = 12, gap = 12 } = {}) {
     const ty = cursor, titleWidth = width - 88;
     const titleH = Math.max(28, linesFor(ctx, title, titleWidth, 15, true).length * 22);
     const bodyH = body ? linesFor(ctx, body, width - 32, 13).length * 20 : 0;
-    const h = 28 + titleH + (body ? 20 + bodyH : 0);
+    const h = 32 + titleH + (body ? 6 + bodyH : 0);
     commands.push(() => {
-      roundRect(ctx, x, ty + 2, width, h, '#e0e4d9', 12);
-      roundRect(ctx, x, ty, width, h, disabled ? C.pale : C.white, 12, disabled ? C.line : '#bacbb7');
-      roundRect(ctx, x + 14, ty + 14, 28, 28, disabled ? C.line : special ? C.green : C.pale, 8);
-      if (body) {
-        ctx.strokeStyle = C.line; ctx.lineWidth = 1; ctx.beginPath();
-        ctx.moveTo(x + 16, ty + 14 + titleH + 9); ctx.lineTo(x + width - 16, ty + 14 + titleH + 9); ctx.stroke();
-      }
+      roundRect(ctx, x, ty, width, h, disabled ? C.pale : C.white, 14, C.line);
+      roundRect(ctx, x + 14, ty + 14, 28, 28, disabled ? C.line : special ? C.mint : C.pale, 8);
       if (!disabled) {
         const cx = x + width - 23, cy = ty + 14 + titleH / 2;
         ctx.strokeStyle = C.green; ctx.lineWidth = 1.6;
@@ -908,9 +996,9 @@ function createLayout(ctx, width, { x = 16, y = 12, gap = 12 } = {}) {
     });
     const markerWidth = linesFor(ctx, marker, 28, 12, true);
     setFont(ctx, 12, true);
-    blockText(markerWidth[0], x + 14 + (28 - ctx.measureText(markerWidth[0]).width) / 2, ty + 21, 28, 12, special && !disabled ? C.white : C.green, true, 16);
+    blockText(markerWidth[0], x + 14 + (28 - ctx.measureText(markerWidth[0]).width) / 2, ty + 21, 28, 12, C.green, true, 16);
     blockText(title, x + 52, ty + 14 + (titleH === 28 ? 3 : 0), titleWidth, 15, disabled ? C.muted : C.ink, true, 22);
-    if (body) blockText(body, x + 16, ty + 14 + titleH + 20, width - 32, 13, disabled ? C.muted : C.green, false, 20);
+    if (body) blockText(body, x + 16, ty + 16 + titleH + 6, width - 32, 13, C.muted, false, 20);
     if (action && !disabled) targets.push({ label: title, x, y: ty, w: width, h, action });
     cursor += h + gap;
   }
@@ -972,16 +1060,17 @@ function headerLayout(size, originX, width, pad, actionCount) {
   let navigation = size.navigation;
   if (navigation && Math.min(normalRight, navigation.right) - left < 88) navigation = null;
   const top = navigation ? navigation.top : (size.top || 0) + 2;
-  const right = navigation ? Math.min(normalRight, navigation.right) : normalRight;
-  const available = right - left, actionWidth = actionCount ? actionCount * 44 + (actionCount - 1) * 8 : 0;
-  const requiredGap = actionCount ? 12 : 0;
+  // Leave extra room for the mini-game entry beside the system capsule.
+  const right = navigation ? Math.min(normalRight, navigation.right - 48) : normalRight;
+  const available = right - left, actionWidth = actionCount ? actionCount * 44 + (actionCount - 1) * 4 : 0;
+  const requiredGap = actionCount ? 8 : 0;
   const inline = available >= 88 + actionWidth + requiredGap;
   const brandSpace = available - (inline ? actionWidth + requiredGap : 0);
   const variant = brandSpace >= 160 ? 'full' : brandSpace >= 116 ? 'short' : 'mark';
   const brand = { x: left, y: top + 4, w: variant === 'full' ? 160 : variant === 'short' ? 116 : 88, h: 36, variant, showName: variant !== 'mark' };
   const actionY = inline ? top : Math.max(size.top || 0, top + 44) + 4;
-  const actionRight = inline ? right : normalRight;
-  const actions = Array.from({ length: actionCount }, (_, i) => ({ x: actionRight - actionWidth + i * 52, y: actionY, w: 44, h: 44 }));
+  const actionLeft = inline ? brand.x + brand.w + requiredGap : left;
+  const actions = Array.from({ length: actionCount }, (_, i) => ({ x: actionLeft + i * 48, y: actionY, w: 44, h: 44 }));
   const bottom = Math.max(top + 44, actionCount ? actionY + 44 : 0, size.top || 0);
   return { brand, actions, bottom, contentTop: bottom + 8, inline };
 }
@@ -1026,9 +1115,8 @@ function drawHeader(ctx, header, items) {
   }
   items.forEach((item, i) => {
     const rect = header.actions[i];
-    // No heavy button block: the icon and caption echo the badge's two-level typography.
-    navigationIcon(ctx, item.icon, rect.x + 13, rect.y + 3);
-    drawText(ctx, item.title, rect.x + 10, rect.y + 26, 12, C.muted);
+    // Keep a full touch target around each centered, icon-only action.
+    navigationIcon(ctx, item.icon, rect.x + 13, rect.y + 13);
   });
 }
 module.exports = { headerLayout, drawHeader };
@@ -1065,16 +1153,19 @@ function createBrowserPlatform() {
         pointerId = null; gesture.end(...point(event));
       });
       const cancel = () => { pointerId = null; gesture.cancel(); };
-      frame.addEventListener('pointercancel', cancel); frame.addEventListener('lostpointercapture', cancel);
+      frame.addEventListener('pointercancel', cancel);
+      // Normal pointerup releases capture after starting inertia. Only an
+      // unexpected capture loss during an active drag should cancel it.
+      frame.addEventListener('lostpointercapture', event => { if (event.pointerId === pointerId) cancel(); });
       // Pointer taps go through the canvas hit regions. Keyboard/assistive clicks retain DOM buttons.
       frame.addEventListener('click', event => { if (event.detail > 0) { event.preventDefault(); event.stopImmediatePropagation(); } }, true);
       frame.addEventListener('wheel', event => {
-        event.preventDefault(); scroll(event.deltaY * (event.deltaMode === 1 ? 20 : event.deltaMode === 2 ? canvas.clientHeight * .75 : 1));
+        gesture.cancel(); event.preventDefault(); scroll(event.deltaY * (event.deltaMode === 1 ? 20 : event.deltaMode === 2 ? canvas.clientHeight * .75 : 1));
       }, { passive: false });
       frame.addEventListener('keydown', event => {
         const step = canvas.clientHeight * .65;
         const deltas = { ArrowDown: 48, ArrowUp: -48, PageDown: step, PageUp: -step, Home: -1e6, End: 1e6 };
-        if (deltas[event.key] !== undefined) { event.preventDefault(); scroll(deltas[event.key]); }
+        if (deltas[event.key] !== undefined) { gesture.cancel(); event.preventDefault(); scroll(deltas[event.key]); }
       });
     },
     onResize(handler) {
@@ -1093,7 +1184,7 @@ function createBrowserPlatform() {
         button.textContent = target.label; button.setAttribute('aria-label', target.label);
         button.setAttribute('aria-pressed', String(!!target.selected));
         Object.assign(button.style, { left: `${target.x}px`, top: `${target.y}px`, width: `${target.w}px`, height: `${target.h}px` });
-        button.onclick = target.action;
+        button.onclick = () => { if (gesture) gesture.cancel(); target.action(); };
       });
       for (const [key, button] of controls) if (!seen.has(key)) { button.remove(); controls.delete(key); }
     },
@@ -1105,24 +1196,47 @@ module.exports = { createBrowserPlatform };
 },
 "src/platform/gesture.js":function(require,module,exports){
 // Shared drag threshold prevents a swipe that ends on an option from choosing it.
-function createGesture(onTap, onScroll) {
+function createGesture(onTap, onScroll, timing = {}) {
+  const frame = timing.frame || (typeof requestAnimationFrame === 'function' ? requestAnimationFrame : null);
+  const now = timing.now || Date.now;
+  let generation = 0, velocity = 0, lastTime = 0;
+  function coast(x, y) {
+    if (!frame || Math.abs(velocity) < 0.08) return;
+    const token = generation; let previous = now(), elapsed = 0;
+    const step = () => {
+      if (token !== generation) return;
+      const current = now(), dt = Math.min(32, Math.max(1, current - previous));
+      previous = current; elapsed += dt;
+      velocity *= Math.exp(-dt / 180);
+      if (elapsed > 700 || Math.abs(velocity) < 0.03) return;
+      if (onScroll(velocity * dt, x, y) !== false) frame(step);
+    };
+    frame(step);
+  }
   let start = null, last = null, moved = false;
   return {
-    start(x, y) { start = last = { x, y }; moved = false; },
+    start(x, y) { generation++; velocity = 0; lastTime = now(); start = last = { x, y }; moved = false; },
     move(x, y) {
       if (!start) return;
       const wasMoved = moved;
       moved = moved || Math.hypot(x - start.x, y - start.y) > 8;
-      if (moved) onScroll((wasMoved ? last.y : start.y) - y, start.x, start.y);
+      const current = now(), dt = Math.max(8, current - lastTime);
+      if (moved) {
+        const delta = (wasMoved ? last.y : start.y) - y;
+        velocity = Math.max(-2.5, Math.min(2.5, delta / dt));
+        onScroll(delta, start.x, start.y);
+      }
+      lastTime = current;
       last = { x, y };
     },
     end(x, y) {
       if (!start) return;
       const tapped = !moved && Math.hypot(x - start.x, y - start.y) <= 8;
+      if (moved && now() - lastTime < 80) coast(start.x, start.y);
       start = last = null;
       if (tapped) onTap(x, y);
     },
-    cancel() { start = last = null; moved = false; }
+    cancel() { generation++; velocity = 0; start = last = null; moved = false; }
   };
 }
 module.exports = { createGesture };

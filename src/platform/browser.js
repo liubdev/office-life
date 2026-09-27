@@ -28,16 +28,19 @@ function createBrowserPlatform() {
         pointerId = null; gesture.end(...point(event));
       });
       const cancel = () => { pointerId = null; gesture.cancel(); };
-      frame.addEventListener('pointercancel', cancel); frame.addEventListener('lostpointercapture', cancel);
+      frame.addEventListener('pointercancel', cancel);
+      // Normal pointerup releases capture after starting inertia. Only an
+      // unexpected capture loss during an active drag should cancel it.
+      frame.addEventListener('lostpointercapture', event => { if (event.pointerId === pointerId) cancel(); });
       // Pointer taps go through the canvas hit regions. Keyboard/assistive clicks retain DOM buttons.
       frame.addEventListener('click', event => { if (event.detail > 0) { event.preventDefault(); event.stopImmediatePropagation(); } }, true);
       frame.addEventListener('wheel', event => {
-        event.preventDefault(); scroll(event.deltaY * (event.deltaMode === 1 ? 20 : event.deltaMode === 2 ? canvas.clientHeight * .75 : 1));
+        gesture.cancel(); event.preventDefault(); scroll(event.deltaY * (event.deltaMode === 1 ? 20 : event.deltaMode === 2 ? canvas.clientHeight * .75 : 1));
       }, { passive: false });
       frame.addEventListener('keydown', event => {
         const step = canvas.clientHeight * .65;
         const deltas = { ArrowDown: 48, ArrowUp: -48, PageDown: step, PageUp: -step, Home: -1e6, End: 1e6 };
-        if (deltas[event.key] !== undefined) { event.preventDefault(); scroll(deltas[event.key]); }
+        if (deltas[event.key] !== undefined) { gesture.cancel(); event.preventDefault(); scroll(deltas[event.key]); }
       });
     },
     onResize(handler) {
@@ -56,7 +59,7 @@ function createBrowserPlatform() {
         button.textContent = target.label; button.setAttribute('aria-label', target.label);
         button.setAttribute('aria-pressed', String(!!target.selected));
         Object.assign(button.style, { left: `${target.x}px`, top: `${target.y}px`, width: `${target.w}px`, height: `${target.h}px` });
-        button.onclick = target.action;
+        button.onclick = () => { if (gesture) gesture.cancel(); target.action(); };
       });
       for (const [key, button] of controls) if (!seen.has(key)) { button.remove(); controls.delete(key); }
     },

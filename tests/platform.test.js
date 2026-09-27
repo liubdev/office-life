@@ -5,6 +5,35 @@ const { createRenderer } = require('../src/ui/renderer');
 const { createGame, choose, advance } = require('../src/core/engine');
 const { events } = require('../src/data/events');
 const { stories } = require('../src/data/stories');
+const { createBrowserPlatform } = require('../src/platform/browser');
+test('浏览器正常释放指针后保持惯性，拖动中丢失捕获则取消', () => {
+  const names = ['window', 'document', 'requestAnimationFrame'];
+  const previous = names.map(name => Object.getOwnPropertyDescriptor(globalThis, name));
+  const handlers = {}, queue = [];
+  let scrolled = 0, taps = 0;
+  const frame = { addEventListener: (name, fn) => { handlers[name] = fn; }, setPointerCapture() {} };
+  const canvas = { getBoundingClientRect: () => ({ left: 0, top: 0 }) };
+  try {
+    globalThis.window = { innerHeight: 800 };
+    globalThis.document = { documentElement: { style: { setProperty() {} } }, getElementById: id => id === 'frame' ? frame : canvas };
+    globalThis.requestAnimationFrame = fn => queue.push(fn);
+    const platform = createBrowserPlatform();
+    platform.onScroll(delta => { scrolled += delta; return true; });
+    platform.onTap(() => taps++);
+    const event = y => ({ pointerId: 1, button: 0, clientX: 30, clientY: y });
+    handlers.pointerdown(event(300)); handlers.pointermove(event(200)); handlers.pointerup(event(200));
+    handlers.lostpointercapture(event(200));
+    const released = scrolled; queue.shift()();
+    assert.ok(scrolled > released, '正常松手后的捕获释放不能打断惯性');
+    handlers.pointerdown(event(200)); handlers.pointermove(event(100)); handlers.lostpointercapture(event(100));
+    const cancelled = scrolled;
+    while (queue.length) queue.shift()();
+    handlers.pointerup(event(100));
+    assert.equal(scrolled, cancelled); assert.equal(taps, 0);
+  } finally {
+    names.forEach((name, i) => { if (previous[i]) Object.defineProperty(globalThis, name, previous[i]); else delete globalThis[name]; });
+  }
+});
 function canvasStub() {
   const ctx = new Proxy({ measureText: str => ({ width: str.length * 14 }) }, { get: (o, k) => k in o ? o[k] : () => {} });
   return { getContext: () => ctx };

@@ -6,16 +6,17 @@ function headerLayout(size, originX, width, pad, actionCount) {
   let navigation = size.navigation;
   if (navigation && Math.min(normalRight, navigation.right) - left < 88) navigation = null;
   const top = navigation ? navigation.top : (size.top || 0) + 2;
-  const right = navigation ? Math.min(normalRight, navigation.right) : normalRight;
-  const available = right - left, actionWidth = actionCount ? actionCount * 44 + (actionCount - 1) * 8 : 0;
-  const requiredGap = actionCount ? 12 : 0;
+  // Leave extra room for the mini-game entry beside the system capsule.
+  const right = navigation ? Math.min(normalRight, navigation.right - 48) : normalRight;
+  const available = right - left, actionWidth = actionCount ? actionCount * 44 + (actionCount - 1) * 4 : 0;
+  const requiredGap = actionCount ? 8 : 0;
   const inline = available >= 88 + actionWidth + requiredGap;
   const brandSpace = available - (inline ? actionWidth + requiredGap : 0);
   const variant = brandSpace >= 160 ? 'full' : brandSpace >= 116 ? 'short' : 'mark';
   const brand = { x: left, y: top + 4, w: variant === 'full' ? 160 : variant === 'short' ? 116 : 88, h: 36, variant, showName: variant !== 'mark' };
   const actionY = inline ? top : Math.max(size.top || 0, top + 44) + 4;
-  const actionRight = inline ? right : normalRight;
-  const actions = Array.from({ length: actionCount }, (_, i) => ({ x: actionRight - actionWidth + i * 52, y: actionY, w: 44, h: 44 }));
+  const actionLeft = inline ? brand.x + brand.w + requiredGap : left;
+  const actions = Array.from({ length: actionCount }, (_, i) => ({ x: actionLeft + i * 48, y: actionY, w: 44, h: 44 }));
   const bottom = Math.max(top + 44, actionCount ? actionY + 44 : 0, size.top || 0);
   return { brand, actions, bottom, contentTop: bottom + 8, inline };
 }
@@ -60,9 +61,8 @@ function drawHeader(ctx, header, items) {
   }
   items.forEach((item, i) => {
     const rect = header.actions[i];
-    // No heavy button block: the icon and caption echo the badge's two-level typography.
-    navigationIcon(ctx, item.icon, rect.x + 13, rect.y + 3);
-    drawText(ctx, item.title, rect.x + 10, rect.y + 26, 12, C.muted);
+    // Keep a full touch target around each centered, icon-only action.
+    navigationIcon(ctx, item.icon, rect.x + 13, rect.y + 13);
   });
 }
 module.exports = { headerLayout, drawHeader };

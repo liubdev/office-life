@@ -46,7 +46,9 @@ function createLayout(ctx, width, { x = 16, y = 12, gap = 12 } = {}) {
     commands.push(() => roundRect(ctx, tx, ty, w, h, fill, 14, options.dark ? undefined : C.line));
     const titleColor = options.dark ? C.white : options.disabled ? C.muted : options.color || C.ink;
     let yy = ty + 16;
-    yy += blockText(title, tx + 16, yy, w - 32, options.size || 15, titleColor, true, Math.ceil((options.size || 15) * 1.45));
+    setFont(ctx, options.size || 15, true);
+    const titleX = options.center ? tx + (w - ctx.measureText(title).width) / 2 : tx + 16;
+    yy += blockText(title, titleX, yy, w - 32, options.size || 15, titleColor, true, Math.ceil((options.size || 15) * 1.45));
     if (body) blockText(body, tx + 16, yy + 6, w - 32, 13, options.dark ? C.mint : C.muted, false, 20);
     if (options.action && !options.disabled) targets.push({ label: options.label || title, x: tx, y: ty, w, h, action: options.action, selected: !!options.selected });
   }
@@ -58,15 +60,10 @@ function createLayout(ctx, width, { x = 16, y = 12, gap = 12 } = {}) {
     const ty = cursor, titleWidth = width - 88;
     const titleH = Math.max(28, linesFor(ctx, title, titleWidth, 15, true).length * 22);
     const bodyH = body ? linesFor(ctx, body, width - 32, 13).length * 20 : 0;
-    const h = 28 + titleH + (body ? 20 + bodyH : 0);
+    const h = 32 + titleH + (body ? 6 + bodyH : 0);
     commands.push(() => {
-      roundRect(ctx, x, ty + 2, width, h, '#e0e4d9', 12);
-      roundRect(ctx, x, ty, width, h, disabled ? C.pale : C.white, 12, disabled ? C.line : '#bacbb7');
-      roundRect(ctx, x + 14, ty + 14, 28, 28, disabled ? C.line : special ? C.green : C.pale, 8);
-      if (body) {
-        ctx.strokeStyle = C.line; ctx.lineWidth = 1; ctx.beginPath();
-        ctx.moveTo(x + 16, ty + 14 + titleH + 9); ctx.lineTo(x + width - 16, ty + 14 + titleH + 9); ctx.stroke();
-      }
+      roundRect(ctx, x, ty, width, h, disabled ? C.pale : C.white, 14, C.line);
+      roundRect(ctx, x + 14, ty + 14, 28, 28, disabled ? C.line : special ? C.mint : C.pale, 8);
       if (!disabled) {
         const cx = x + width - 23, cy = ty + 14 + titleH / 2;
         ctx.strokeStyle = C.green; ctx.lineWidth = 1.6;
@@ -75,9 +72,9 @@ function createLayout(ctx, width, { x = 16, y = 12, gap = 12 } = {}) {
     });
     const markerWidth = linesFor(ctx, marker, 28, 12, true);
     setFont(ctx, 12, true);
-    blockText(markerWidth[0], x + 14 + (28 - ctx.measureText(markerWidth[0]).width) / 2, ty + 21, 28, 12, special && !disabled ? C.white : C.green, true, 16);
+    blockText(markerWidth[0], x + 14 + (28 - ctx.measureText(markerWidth[0]).width) / 2, ty + 21, 28, 12, C.green, true, 16);
     blockText(title, x + 52, ty + 14 + (titleH === 28 ? 3 : 0), titleWidth, 15, disabled ? C.muted : C.ink, true, 22);
-    if (body) blockText(body, x + 16, ty + 14 + titleH + 20, width - 32, 13, disabled ? C.muted : C.green, false, 20);
+    if (body) blockText(body, x + 16, ty + 16 + titleH + 6, width - 32, 13, C.muted, false, 20);
     if (action && !disabled) targets.push({ label: title, x, y: ty, w: width, h, action });
     cursor += h + gap;
   }
